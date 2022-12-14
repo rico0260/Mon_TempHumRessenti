@@ -5,8 +5,6 @@
  * repeater and gateway builds a routing tables in EEPROM which keeps track of the
  * network topology allowing messages to be routed to nodes.
  *
- * Created by Henrik Ekblad <henrik.ekblad@mysensors.org>
- * Copyright (C) 2013-2015 Sensnology AB
  * Full contributor list: https://github.com/mysensors/Arduino/graphs/contributors
  *
  * Documentation: http://www.mysensors.org
@@ -18,19 +16,9 @@
  *
  *******************************
  *
- * REVISION HISTORY
- * Version 1.0 (humidity sensor): Henrik EKblad
- * Version 1.1 - 2016-07-20 (humidity sensor): Converted to MySensors v2.0 and added various improvements - Torben Woltjen (mozzbozz)
- * Version 2.0 - 2018-09-25: Converted to DHTU Adafruit library - Tiberio Galletti
- * Version 2.1 - 2018-10-06: Clearer code and... if something changed... every sensor data are sent to gateway - Tiberio Galletti
- * Version 2.2 - 2018-12-27: Heat Index calculation included in sketch (based on Adafruit official library) - Tiberio Galletti
- * 
  * DESCRIPTION
  * This sketch provides an example of how to implement a humidity/temperature sensor using a DHT11/DHT21/DHT22. 
  * It inlcudes Heat Index *sensor*
- *  
- * For more information, please visit:
- * http://www.mysensors.org/build/TempHumFeel-DHT
  * 
  */
 #include <Arduino.h>
@@ -49,9 +37,12 @@
 
 #define MY_REPEATER_FEATURE
 
+//Options: RF24_PA_MIN, RF24_PA_LOW, (RF24_PA_HIGH), RF24_PA_MAX
+#define MY_RF24_PA_LEVEL RF24_PA_MAX
+
 // Rien pour automatique
 //#define MY_NODE_ID AUTO
-#define MY_NODE_ID 2
+#define MY_NODE_ID 1
 
 //MY_RF24_CHANNEL par defaut 76
 #define MY_RF24_CHANNEL 81 //test
@@ -87,9 +78,9 @@ static const uint8_t FORCE_UPDATE_N_READS = 10;
 #define SENSOR_RESSENTI_OFFSET 0   // used for heat index data
 
 // Wait times
+#define SHORT_WAIT 50
 #define LONG_WAIT 500
 #define LONG_WAIT2 2000
-#define SHORT_WAIT 50
 
 // used libraries: they have to be installed by Arduino IDE (menu path: tools - manage libraries)
 #include <MySensors.h>  // *MySensors* by The MySensors Team (tested on version 2.3.2)
@@ -101,13 +92,17 @@ DHT_Unified dhtu(DHTDATAPIN, DHTTYPE);
 //   https://learn.adafruit.com/dht/overview
 
 uint32_t delayMS;
-float lastTemp;
-float lastHum;
+float newTemp;
+float newHum;
 uint8_t nNoUpdates = FORCE_UPDATE_N_READS; // send data on start-up 
 bool metric = true;
 float temperature;
 float humidity;
 float T_ressentie;
+
+float lastTemp;
+float lastHum;
+float lastT_ressentie;
 
 bool first_message_sent = false;
 
@@ -166,7 +161,7 @@ void presentation()
   Serial.println("Envoyer SketchInfo");
   Serial.print(SN); Serial.print(" "); Serial.println(SV);
   sendSketchInfo(SN, SV);
-  wait(LONG_WAIT);
+  wait(LONG_WAIT2);
 
   // Register all sensors to gw (they will be created as child devices)
   Serial.print("Envoyer présentation pour du noeud : ");
@@ -178,7 +173,7 @@ void presentation()
   strcat(sChild0, " Temperature");
   Serial.println(sChild0);
   present(CHILD_ID_TEMP, S_TEMP, sChild0);
-  wait(LONG_WAIT); //to check: is it needed
+  wait(LONG_WAIT2); //to check: is it needed
 
   // Humidite
   char sChild1[25];
@@ -187,7 +182,7 @@ void presentation()
   strcat(sChild1, " Humidite");
   Serial.println(sChild1);
   present(CHILD_ID_HUM, S_HUM, sChild1);
-  wait(LONG_WAIT); //to check: is it needed
+  wait(LONG_WAIT2); //to check: is it needed
 
   // Ressenti
   char sChild2[25];
@@ -196,7 +191,7 @@ void presentation()
   strcat(sChild2, " T Ressentie");
   Serial.println(sChild2);
   present(CHILD_ID_RESSENT, S_TEMP, sChild2);
-  wait(LONG_WAIT); //to check: is it needed
+  wait(LONG_WAIT2); //to check: is it needed
 
   metric = getControllerConfig().isMetric;
 
@@ -255,9 +250,6 @@ void loop()
     wait(LONG_WAIT);                                      //to check: is it needed
     send(msgRESSENTI.set(T_ressentie + SENSOR_RESSENTI_OFFSET, 2));
     wait(LONG_WAIT);                                      //to check: is it needed
-    //Serial.println("Requesting initial value from controller");
-    //request(TEMP_CHILD, V_TEMP);
-    //wait(LONG_WAIT, C_SET, V_TEMP);
     first_message_sent = true;
   }
 
@@ -293,9 +285,9 @@ void loop()
     #endif
   }
 
-if (fabs(humidity - lastHum)>=0.05 || fabs(temperature - lastTemp)>=0.05 || nNoUpdates >= FORCE_UPDATE_N_READS) {
-    lastTemp = temperature;
-    lastHum = humidity;
+if (fabs(humidity - newHum)>=0.05 || fabs(temperature - newTemp)>=0.05 || nNoUpdates >= FORCE_UPDATE_N_READS) {
+    newTemp = temperature;
+    newHum = humidity;
     T_ressentie = calculRessenti(temperature,humidity); //computes Heat Index, in *C
     nNoUpdates = 0; // Reset no updates counter
     #ifdef MY_DEBUG
@@ -314,21 +306,30 @@ if (fabs(humidity - lastHum)>=0.05 || fabs(temperature - lastTemp)>=0.05 || nNoU
       Serial.print("Sending temperature: ");
       Serial.print(temperature);
     #endif    
-    send(msgTEMP.set(temperature + SENSOR_TEMP_OFFSET, 2));
+    if (lastTemp != temperature) {
+      lastTemp = temperature;
+      send(msgTEMP.set(temperature + SENSOR_TEMP_OFFSET, 2));
+    }
 
     #ifdef MY_DEBUG
       wait(SHORT_WAIT);
       Serial.print("Sending humidity: ");
       Serial.print(humidity);
     #endif    
-    send(msgHUM.set(humidity + SENSOR_HUM_OFFSET, 2));
+    if (lastHum != humidity) {
+      lastHum = humidity;
+      send(msgHUM.set(humidity + SENSOR_HUM_OFFSET, 2));
+    }
 
     #ifdef MY_DEBUG
       wait(SHORT_WAIT);
       Serial.print("Sending T ressentie: ");
       Serial.print(T_ressentie);
     #endif    
-    send(msgRESSENTI.set(T_ressentie + SENSOR_RESSENTI_OFFSET, 2));
+    if (lastT_ressentie != T_ressentie) {
+      lastT_ressentie = T_ressentie;
+      send(msgRESSENTI.set(T_ressentie + SENSOR_RESSENTI_OFFSET, 2));
+    }
 
   }
 
