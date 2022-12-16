@@ -29,24 +29,31 @@
 // Enable debug prints to serial monitor
 //#define MY_DEBUG
 
+//#define MY_REPEATER_FEATURE
+
 // Enable and select radio type attached
 //#define MY_RADIO_NRF5_ESB
 //#define MY_RADIO_RFM69
 //#define MY_RADIO_RFM95
 #define MY_RADIO_RF24
 
-#define MY_REPEATER_FEATURE
-
 //Options: RF24_PA_MIN, RF24_PA_LOW, (RF24_PA_HIGH), RF24_PA_MAX
 #define MY_RF24_PA_LEVEL RF24_PA_MAX
 
-// Rien pour automatique
-//#define MY_NODE_ID AUTO
-#define MY_NODE_ID 1
-
 //MY_RF24_CHANNEL par defaut 76
-#define MY_RF24_CHANNEL 81 //test
-//#define MY_RF24_CHANNEL 83 //Production
+//Channels: 1 to 126 - 76 = Channel 77
+//MY_RF24_CHANNEL (76)
+#define MY_RF24_CHANNEL 81 //Production
+
+//======== Ne pas utiliser cette fonction avec ce noeud ===========
+//#define MY_RX_MESSAGE_BUFFER_FEATURE //for MY_RF24_IRQ_PIN
+//Define this to use the IRQ pin of the RF24 module
+//#define MY_RF24_IRQ_PIN (2)
+//======== Ne pas utiliser cette fonction avec ce noeud ===========
+
+//uncomment this line to assign a static ID
+//#define MY_NODE_ID 1 //Cave
+#define MY_NODE_ID 2 //Garage
 
 // Uncomment the type of sensor in use:
 //#define DHTTYPE DHT11 // DHT 11 
@@ -55,8 +62,8 @@
 #define DHTTYPE DHT22 // DHT 22 (AM2302)
 
 // Set this to the pin you connected the DHT's data and power pins to; connect wires in coherent pins
-#define DHTDATAPIN        3         
-//#define DHTPOWERPIN       8
+#define DHTDATAPIN 3         
+//#define DHTPOWERPIN 8
 
 // Sleep time between sensor updates (in milliseconds) to add to sensor delay (read from sensor data; typically: 1s)
 static const uint64_t UPDATE_INTERVAL = 60000; 
@@ -100,11 +107,9 @@ float temperature;
 float humidity;
 float T_ressentie;
 
-float lastTemp;
-float lastHum;
-float lastT_ressentie;
-
-bool first_message_sent = false;
+float lastTemp = -100.0;
+float lastHum = -100.0;
+float lastT_ressentie = -100.0;
 
 MyMessage msgTEMP(CHILD_ID_TEMP, V_TEMP);
 MyMessage msgHUM(CHILD_ID_HUM, V_HUM);
@@ -124,20 +129,20 @@ float calculRessenti(float temperature, float percentHumidity) {
 
   if (hi > 79) {
     hi = -42.379 +
-             2.04901523 * temperature +
-            10.14333127 * percentHumidity +
-            -0.22475541 * temperature*percentHumidity +
-            -0.00683783 * pow(temperature, 2) +
-            -0.05481717 * pow(percentHumidity, 2) +
-             0.00122874 * pow(temperature, 2) * percentHumidity +
-             0.00085282 * temperature*pow(percentHumidity, 2) +
-            -0.00000199 * pow(temperature, 2) * pow(percentHumidity, 2);
+      2.04901523 * temperature +
+      10.14333127 * percentHumidity +
+      -0.22475541 * temperature*percentHumidity +
+      -0.00683783 * pow(temperature, 2) +
+      -0.05481717 * pow(percentHumidity, 2) +
+      0.00122874 * pow(temperature, 2) * percentHumidity +
+      0.00085282 * temperature*pow(percentHumidity, 2) +
+      -0.00000199 * pow(temperature, 2) * pow(percentHumidity, 2);
 
-    if((percentHumidity < 13) && (temperature >= 80.0) && (temperature <= 112.0))
-      hi -= ((13.0 - percentHumidity) * 0.25) * sqrt((17.0 - abs(temperature - 95.0)) * 0.05882);
+  if((percentHumidity < 13) && (temperature >= 80.0) && (temperature <= 112.0))
+    hi -= ((13.0 - percentHumidity) * 0.25) * sqrt((17.0 - abs(temperature - 95.0)) * 0.05882);
 
-    else if((percentHumidity > 85.0) && (temperature >= 80.0) && (temperature <= 87.0))
-      hi += ((percentHumidity - 85.0) * 0.1) * ((87.0 - temperature) * 0.2);
+  else if((percentHumidity > 85.0) && (temperature >= 80.0) && (temperature <= 87.0))
+    hi += ((percentHumidity - 85.0) * 0.1) * ((87.0 - temperature) * 0.2);
   }
 
   hi = (hi-32)/1.8;
@@ -153,19 +158,19 @@ float calculRessenti(float temperature, float percentHumidity) {
 
 void presentation()  
 { 
-  Serial.print("===> Envoyer présentation pour noeud : "); Serial.println(MY_NODE_ID);
+  Serial.println("");
+  Serial.print("===> Présentation du noeud : "); Serial.println(MY_NODE_ID);
 
   char sNoeud[] = STR(MY_NODE_ID);
 
   // Send the sketch version information to the gateway
-  Serial.println("Envoyer SketchInfo");
+  Serial.println("===> Présenter SketchInfo");
   Serial.print(SN); Serial.print(" "); Serial.println(SV);
   sendSketchInfo(SN, SV);
   wait(LONG_WAIT2);
 
   // Register all sensors to gw (they will be created as child devices)
-  Serial.print("Envoyer présentation pour du noeud : ");
-  Serial.println("Présenter les capteurs");
+  Serial.println("===> Présenter les capteurs");
   // Temperature
   char sChild0[25];
   strcpy(sChild0, "myS ");
@@ -232,6 +237,7 @@ void setup()
   Serial.print  ("Resolution:   "); Serial.print(sensor.resolution); Serial.println("%");  
   Serial.print  ("Min Delay:   "); Serial.print(sensor.min_delay/1000); Serial.println(" ms");  
   Serial.println("------------------------------------");
+
   // Set delay between sensor readings based on sensor details.
   delayMS = sensor.min_delay / 1000; 
 
@@ -240,18 +246,19 @@ void setup()
 void loop()      
 {  
 
-  //Pour Home assistant
-  if (!first_message_sent) {
-    //send(msgPrefix.set("custom_lux"));  // Set custom unit.
-    Serial.println("Sending initial value");
-    send(msgTEMP.set(temperature + SENSOR_TEMP_OFFSET, 2));
-    wait(LONG_WAIT);                                      //to check: is it needed
-    send(msgHUM.set(humidity + SENSOR_HUM_OFFSET, 2));
-    wait(LONG_WAIT);                                      //to check: is it needed
-    send(msgRESSENTI.set(T_ressentie + SENSOR_RESSENTI_OFFSET, 2));
-    wait(LONG_WAIT);                                      //to check: is it needed
-    first_message_sent = true;
-  }
+  // //Pour Home assistant
+  // static bool first_message_sent = false;
+  // if (!first_message_sent) {
+  //   //send(msgPrefix.set("custom_lux"));  // Set custom unit.
+  //   Serial.println("Sending initial value");
+  //   send(msgTEMP.set(temperature + SENSOR_TEMP_OFFSET, 2));
+  //   wait(LONG_WAIT);
+  //   send(msgHUM.set(humidity + SENSOR_HUM_OFFSET, 2));
+  //   wait(LONG_WAIT);
+  //   send(msgRESSENTI.set(T_ressentie + SENSOR_RESSENTI_OFFSET, 2));
+  //   wait(LONG_WAIT);
+  //   first_message_sent = true;
+  // }
 
   ////digitalWrite(DHTPOWERPIN, HIGH);   
   delay(delayMS); //delai entre chaque mesure
@@ -260,28 +267,28 @@ void loop()
   // Get temperature event and use its value.
   dhtu.temperature().getEvent(&event);
   if (isnan(event.temperature)) {
-    Serial.println("Error reading temperature!");
+    #ifdef MY_DEBUG 
+      Serial.println("Error reading temperature!");
+    #endif
   }
   else {
     temperature = event.temperature;
     #ifdef MY_DEBUG
-      Serial.print("Temperature: ");
-      Serial.print(temperature);
-      Serial.println(" *C");
+      Serial.print("Temperature: "); Serial.print(temperature); Serial.println(" *C");
     #endif
   }
 
   // Get humidity event and use its value.
   dhtu.humidity().getEvent(&event);
   if (isnan(event.relative_humidity)) {
-    Serial.println("Error reading humidity!");
+    #ifdef MY_DEBUG 
+      Serial.println("Error reading humidity!");
+    #endif
   }
   else {
     humidity = event.relative_humidity;
     #ifdef MY_DEBUG
-      Serial.print("Humidite: ");
-      Serial.print(humidity);
-      Serial.println("%");
+      Serial.print("Humidite: "); Serial.print(humidity); Serial.println("%");
     #endif
   }
 
@@ -291,9 +298,7 @@ if (fabs(humidity - newHum)>=0.05 || fabs(temperature - newTemp)>=0.05 || nNoUpd
     T_ressentie = calculRessenti(temperature,humidity); //computes Heat Index, in *C
     nNoUpdates = 0; // Reset no updates counter
     #ifdef MY_DEBUG
-      Serial.print("T Ressentie: ");
-      Serial.print(T_ressentie);
-      Serial.println(" *C");    
+      Serial.print("T Ressentie: "); Serial.print(T_ressentie); Serial.println(" *C");    
     #endif    
     
     if (!metric) {
@@ -301,34 +306,31 @@ if (fabs(humidity - newHum)>=0.05 || fabs(temperature - newTemp)>=0.05 || nNoUpd
       T_ressentie = 1.8*T_ressentie+32; //convertion to *F
     }
     
-    #ifdef MY_DEBUG
-      wait(SHORT_WAIT);
-      Serial.print("Sending temperature: ");
-      Serial.print(temperature);
-    #endif    
     if (lastTemp != temperature) {
       lastTemp = temperature;
+      #ifdef MY_DEBUG
+        Serial.print("Sending temperature: "); Serial.print(temperature);
+      #endif      
       send(msgTEMP.set(temperature + SENSOR_TEMP_OFFSET, 2));
+      wait(SHORT_WAIT);
     }
 
-    #ifdef MY_DEBUG
-      wait(SHORT_WAIT);
-      Serial.print("Sending humidity: ");
-      Serial.print(humidity);
-    #endif    
     if (lastHum != humidity) {
       lastHum = humidity;
+      #ifdef MY_DEBUG
+        Serial.print("Sending humidity: "); Serial.print(humidity);
+      #endif
       send(msgHUM.set(humidity + SENSOR_HUM_OFFSET, 2));
+      wait(SHORT_WAIT);
     }
 
-    #ifdef MY_DEBUG
-      wait(SHORT_WAIT);
-      Serial.print("Sending T ressentie: ");
-      Serial.print(T_ressentie);
-    #endif    
     if (lastT_ressentie != T_ressentie) {
       lastT_ressentie = T_ressentie;
+      #ifdef MY_DEBUG
+        Serial.print("Sending T ressentie: "); Serial.print(T_ressentie);
+      #endif
       send(msgRESSENTI.set(T_ressentie + SENSOR_RESSENTI_OFFSET, 2));
+      wait(SHORT_WAIT);
     }
 
   }
@@ -338,6 +340,11 @@ if (fabs(humidity - newHum)>=0.05 || fabs(temperature - newTemp)>=0.05 || nNoUpd
   // Sleep for a while to save energy
   ////digitalWrite(DHTPOWERPIN, LOW); 
   wait(300); // waiting for potential presentation requests
-  sleep(UPDATE_INTERVAL); 
+  
+  #ifdef MY_DEBUG 
+    sleep(20000);
+  #else 
+    sleep(UPDATE_INTERVAL); 
+  #endif
 
 }
