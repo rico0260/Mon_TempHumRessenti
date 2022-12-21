@@ -43,7 +43,7 @@
 //MY_RF24_CHANNEL par defaut 76
 //Channels: 1 to 126 - 76 = Channel 77
 //MY_RF24_CHANNEL (76)
-#define MY_RF24_CHANNEL 81 //Production
+#include <perso.h>
 
 //======== Ne pas utiliser cette fonction avec ce noeud ===========
 //#define MY_RX_MESSAGE_BUFFER_FEATURE //for MY_RF24_IRQ_PIN
