@@ -5,7 +5,6 @@
  * repeater and gateway builds a routing tables in EEPROM which keeps track of the
  * network topology allowing messages to be routed to nodes.
  *
- *
  * Documentation: http://www.mysensors.org
  * Support Forum: http://forum.mysensors.org
  *
@@ -18,6 +17,10 @@
  * DESCRIPTION
  * This sketch provides an example of how to implement a humidity/temperature sensor using a DHT11/DHT21/DHT22. 
  * It inlcudes Heat Index *sensor*
+ * 
+ * For DHT11, DHT12, DHT21 (AM2301), DHT22 (AM2302)
+ * 
+ * Author: Eric H
  * 
  */
 #include <Arduino.h>
